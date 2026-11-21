@@ -370,7 +370,25 @@ def run_monitor(
         f"Channels={notifier.active_channels or ['none']})"
     )
 
+    pending_status_update_id = notifier.check_telegram_status_command()
     live_syncs: list[dict[str, Any]] = []
+
+    def maybe_reply_status(page: Page, status_label: str, sync_info: str) -> None:
+        if pending_status_update_id is None:
+            return
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_png = Path(tmpdir) / "legarda_status.png"
+            page.screenshot(path=str(status_png), full_page=True)
+            ok = notifier.send_telegram_status_reply(
+                screenshot_path=status_png,
+                status_label=status_label,
+                office=TARGET_OFFICE,
+                mode=mode_value,
+                sync_info=sync_info,
+                portal_url=ROOT_URL,
+            )
+            if ok:
+                notifier.ack_telegram_updates(pending_status_update_id)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -417,6 +435,8 @@ def run_monitor(
                         redirect_url=active_url,
                         office=TARGET_OFFICE,
                     )
+                    if pending_status_update_id is not None:
+                        notifier.ack_telegram_updates(pending_status_update_id)
                     return 0
 
                 if home_status == "timeout":
@@ -441,6 +461,11 @@ def run_monitor(
                 )
                 if closed_btn.count() > 0 and closed_btn.first.is_visible():
                     print(f"PORTAL_CLOSED_MAINTENANCE ({TARGET_OFFICE}) — AppSheet 'Closed' tab active")
+                    maybe_reply_status(
+                        page,
+                        status_label="PORTAL CLOSED / MAINTENANCE ('Closed' tab active)",
+                        sync_info=f"HTTP 200 x{len(live_syncs)} ({latest_sync['server_date']})",
+                    )
                     return 0
 
                 # Portal is open -> switch to Appointment Form view
@@ -457,6 +482,8 @@ def run_monitor(
                     redirect_url=active_url,
                     office=TARGET_OFFICE,
                 )
+                if pending_status_update_id is not None:
+                    notifier.ack_telegram_updates(pending_status_update_id)
                 return 0
 
             if status != "ready":
@@ -556,6 +583,11 @@ def run_monitor(
                 or no_slots_in_body
             ):
                 print(f"NO_SLOTS ({TARGET_OFFICE})")
+                maybe_reply_status(
+                    page,
+                    status_label="NO SLOTS AVAILABLE (Portal Open, Legarda Full)",
+                    sync_info=f"HTTP 200 x{len(live_syncs)} ({latest_sync['server_date']})",
+                )
                 return 0
 
             # Banner absent & guards passed -> SLOTS OPEN! Capture full-page PNG and send urgent alert.
@@ -589,6 +621,8 @@ def run_monitor(
                     details_note=status_summary,
                 )
                 print(f"Alert dispatch results: {results}")
+                if pending_status_update_id is not None:
+                    notifier.ack_telegram_updates(pending_status_update_id)
 
             return 0
 

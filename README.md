@@ -63,6 +63,7 @@ The monitor auto-detects channels from environment variables / GitHub Secrets. I
 2. Follow the prompts and copy the **HTTP API token** → this is your `TELEGRAM_BOT_TOKEN`.
 3. Open a chat with your new bot and send `/start` (or `"hi"`).
 4. Open `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in a browser and copy `"chat": {"id": 123456789}` → this is your `TELEGRAM_CHAT_ID`.
+5. **On-demand remote status check:** Send `/status` (or `/check`) to your bot anytime from your phone. On the next scheduled run, the monitor replies with a live status summary (`PORTAL CLOSED / MAINTENANCE` or `NO SLOTS`) + a fresh screenshot (only authorized messages from `TELEGRAM_CHAT_ID` are honored).
 
 ### Option B — Discord Webhook
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -29,6 +30,7 @@ PHT = timezone(timedelta(hours=8))
 DISCORD_MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB Discord free webhook limit
 REQUEST_TIMEOUT_SEC = 25
 MAX_ATTEMPTS = 3
+STATUS_COMMAND_RE = re.compile(r"^(/status|/check|/ping|status|check)(@\w+)?\s*$", re.I)
 
 
 @dataclass(frozen=True)
@@ -196,6 +198,106 @@ class Notifier:
             )
 
         return results
+
+    def check_telegram_status_command(self) -> int | None:
+        """Poll Telegram getUpdates for an authorized /status (/check, /ping) command.
+
+        Only honors messages from the configured TELEGRAM_CHAT_ID.
+        Returns the max update_id to acknowledge if a status reply is requested, else None.
+        Non-fatal on network errors so slot monitoring is never blocked.
+        """
+        if not self.config.telegram_enabled:
+            return None
+
+        assert self.config.telegram_bot_token and self.config.telegram_chat_id
+        api_url = f"https://api.telegram.org/bot{self.config.telegram_bot_token}/getUpdates"
+        try:
+            resp = requests.get(api_url, params={"timeout": 0, "limit": 50}, timeout=15)
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as exc:
+            print(f"[WARN] Telegram getUpdates poll skipped due to network error: {exc}")
+            return None
+
+        updates = payload.get("result", [])
+        if not updates:
+            return None
+
+        max_update_id = max(int(u["update_id"]) for u in updates if "update_id" in u)
+        status_requested = False
+        for upd in updates:
+            msg = upd.get("message") or upd.get("edited_message") or {}
+            chat_id = str(msg.get("chat", {}).get("id", ""))
+            text = (msg.get("text") or "").strip()
+            if chat_id == self.config.telegram_chat_id and STATUS_COMMAND_RE.match(text):
+                status_requested = True
+
+        if status_requested:
+            print(f"[TELEGRAM] Authorized /status command detected (update_id={max_update_id}).")
+            return max_update_id
+
+        # Acknowledge non-command updates so getUpdates stays clean
+        self.ack_telegram_updates(max_update_id)
+        return None
+
+    def ack_telegram_updates(self, last_update_id: int) -> None:
+        """Mark Telegram updates up to last_update_id as processed."""
+        if not self.config.telegram_enabled:
+            return
+        assert self.config.telegram_bot_token
+        api_url = f"https://api.telegram.org/bot{self.config.telegram_bot_token}/getUpdates"
+        try:
+            requests.get(
+                api_url,
+                params={"offset": last_update_id + 1, "timeout": 0, "limit": 1},
+                timeout=15,
+            )
+        except Exception as exc:
+            print(f"[WARN] Failed to acknowledge Telegram updates: {exc}")
+
+    def send_telegram_status_reply(
+        self,
+        *,
+        screenshot_path: Path,
+        status_label: str,
+        office: str,
+        mode: str,
+        sync_info: str,
+        portal_url: str,
+    ) -> bool:
+        """Reply to an authorized /status command with a live status summary and screenshot."""
+        if not self.config.telegram_enabled:
+            return False
+
+        assert self.config.telegram_bot_token and self.config.telegram_chat_id
+        timestamp = now_pht_str()
+        caption = (
+            "✅ <b>Monitor Running — Live Status</b>\n"
+            f"<b>Office:</b> {html.escape(office)}\n"
+            f"<b>Mode:</b> {html.escape(mode)}\n"
+            f"<b>Status:</b> {html.escape(status_label)}\n"
+            f"<b>Live Sync:</b> {html.escape(sync_info)}\n"
+            f"<b>Checked:</b> {html.escape(timestamp)}\n\n"
+            f'🔗 <a href="{html.escape(portal_url, quote=True)}">Open DSWD AppSheet Portal</a>'
+        )[:1020]
+
+        api_url = f"https://api.telegram.org/bot{self.config.telegram_bot_token}/sendPhoto"
+        try:
+            png_bytes = screenshot_path.read_bytes()
+            _post_with_retry(
+                api_url,
+                data={
+                    "chat_id": self.config.telegram_chat_id,
+                    "caption": caption,
+                    "parse_mode": "HTML",
+                },
+                files={"photo": (screenshot_path.name, png_bytes, "image/png")},
+            )
+            print("[NOTIFY] Telegram /status photo reply succeeded.")
+            return True
+        except Exception as exc:
+            print(f"[ERROR] Telegram /status reply failed: {exc}")
+            return False
 
     def _send_telegram_photo(
         self,
