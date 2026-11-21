@@ -2,9 +2,10 @@ name: Check DSWD Legarda Slots
 
 on:
   schedule:
-    # Runs every 10 minutes (GitHub Actions may jitter during peak UTC hours;
-    # use workflow_dispatch + cron-job.org for strict 5-minute intervals)
-    - cron: "*/10 * * * *"
+    # Runs every 10 minutes on off-peak minutes (:04, :14, :24, :34, :44, :54)
+    # to avoid GitHub Actions' congested :00/:10/:20/:30/:40/:50 cron spikes.
+    # For strict 5-minute intervals, trigger workflow_dispatch via cron-job.org.
+    - cron: "4,14,24,34,44,54 * * * *"
   workflow_dispatch:
     inputs:
       test_alert:
