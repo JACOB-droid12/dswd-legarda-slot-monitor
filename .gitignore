@@ -1,0 +1,25 @@
+# Secrets & exported AppSheet sessions (NEVER commit to a public repo)
+session.json
+*.session.json
+.env
+.env.*
+
+# Debug, verification, and alert screenshots
+*.png
+verify_dom_dump.json
+
+# Python virtual environments & bytecode
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
